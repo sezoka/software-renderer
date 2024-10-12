@@ -6,8 +6,8 @@ import "core:math/linalg"
 import "core:slice"
 import rl "vendor:raylib"
 
-SCREEN_WIDTH :: 640
-SCREEN_HEIGHT :: 640
+SCREEN_WIDTH :: 600
+SCREEN_HEIGHT :: 600
 SCREEN_RATIO :: SCREEN_WIDTH / SCREEN_HEIGHT
 Vw :: 1
 Vh :: 1
@@ -27,10 +27,34 @@ Sphere :: struct {
     reflective: f32,
 }
 spheres := [?]Sphere {
-    Sphere{center = {0, -1, 3}, radius = 1, color = {255, 0, 0}, specular = 500, reflective = 0.2},
-    Sphere{center = {2, 0, 4}, radius = 1, color = {0, 0, 255}, specular = 500, reflective = 0.3},
-    Sphere{center = {-2, 0, 4}, radius = 1, color = {0, 255, 0}, specular = 10, reflective = 0.4},
-    Sphere{color = {255, 255, 0}, center = {0, -5001, 0}, radius = 5000, specular = 1000, reflective = 0.5},
+    Sphere {
+        center = {0, -1, 3},
+        radius = 1,
+        color = {255, 0, 0},
+        specular = 500,
+        reflective = 0.2,
+    },
+    Sphere {
+        center = {2, 0, 4},
+        radius = 1,
+        color = {0, 0, 255},
+        specular = 500,
+        reflective = 0.3,
+    },
+    Sphere {
+        center = {-2, 0, 4},
+        radius = 1,
+        color = {0, 255, 0},
+        specular = 10,
+        reflective = 0.4,
+    },
+    Sphere {
+        color = {255, 255, 0},
+        center = {0, -5001, 0},
+        radius = 5000,
+        specular = 1000,
+        reflective = 0.5,
+    },
 }
 
 Light :: struct {
@@ -83,13 +107,14 @@ main :: proc() {
 
     // rl.SetTargetFPS(60)
 
-    a := [3]f32{0, 0, 0.3}
-    b := [3]f32{10, 10, 0.1}
+    b := [3]f32{-200, -250, 1}
+    a := [3]f32{200, 50, 1}
+    c := [3]f32{20, 250, 1}
 
     cnt := 0
     for !rl.WindowShouldClose() {
         rl.BeginDrawing()
-        rl.ClearBackground(rl.BLACK)
+        rl.ClearBackground(rl.WHITE)
 
         if rl.IsKeyDown(.LEFT) do b.x -= 1
         if rl.IsKeyDown(.RIGHT) do b.x += 1
@@ -111,7 +136,7 @@ main :: proc() {
         // }
 
         // run_raytracing()
-        triangle(a, b, {0, 0, 1}, {10, 200, 0})
+        triangle(a, b, c, {{255, 0, 0}, {0, 255, 0}, {0, 0, 255}})
 
         rl.UpdateTexture(texture, &data)
         rl.DrawTexture(texture, 0, 0, rl.WHITE)

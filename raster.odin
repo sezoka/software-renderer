@@ -1,5 +1,6 @@
 package raycaster
 
+import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 
@@ -39,64 +40,77 @@ import "core:math/linalg"
 //     draw_line(p2, p0, color)
 // }
 
-triangle :: proc(p0, p1, p2: [3]f32, color: [3]f32) {
-    p0, p1, p2 := p0, p1, p2
+triangle :: proc(p0, p1, p2: [3]f32, colors: [3][3]f32) {
+    bboxmin: [2]f32 = {SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2}
+    bboxmax: [2]f32 = {-SCREEN_WIDTH - 1, -SCREEN_HEIGHT - 1}
+    clamp := bboxmin
 
-    // sort the vertices, t0, t1, t2 lower−to−upper (bubblesort yay!)
-    if p0.y > p1.y do p0, p1 = p1, p0
-    if p0.y > p2.y do p0, p2 = p2, p0
-    if p1.y > p2.y do p1, p2 = p2, p1
+    normalize_bbox :: proc(bboxmin, bboxmax, clamp: ^[2]f32, p: [2]f32) {
+        bboxmin.x = math.max(SCREEN_WIDTH * -0.5, math.min(bboxmin.x, p.x))
+        bboxmin.y = math.max(SCREEN_HEIGHT * -0.5, math.min(bboxmin.y, p.y))
+        bboxmax.x = math.min(clamp.x, math.max(bboxmax.x, p.x))
+        bboxmax.y = math.min(clamp.y, math.max(bboxmax.y, p.y))
+    }
 
-    h0, h1, h2 := p0.z, p1.z, p2.z
-    y0, y1, y2 := p0.y, p1.y, p2.y
-    x0, x1, x2 := p0.x, p1.x, p2.x
-    top, mid, bottom := p0, p1, p2
+    // fmt.println(bboxmin, bboxmax, clamp)
 
-    total_height := y2 - y0
+    normalize_bbox(&bboxmin, &bboxmax, &clamp, p0.xy)
+    normalize_bbox(&bboxmin, &bboxmax, &clamp, p1.xy)
+    normalize_bbox(&bboxmin, &bboxmax, &clamp, p2.xy)
 
-    vector_between_top_and_bottom := p2 - p0
-    vector_between_top_and_middle := p1 - p0
-    vector_between_mid_and_bottom := p2 - p1
 
-    top_segment_height := y1 - y0 + 1
-    bottom_segment_height := y2 - y1 + 1
+    for x in bboxmin.x ..= bboxmax.x {
+        for y in bboxmin.y ..= bboxmax.y {
+            u, v, w := barycentric(p0, p1, p2, {x, y, 1})
+            sum := u + v + w
+            color :=
+                ((u / sum) * colors[0]) +
+                ((v / sum) * colors[1]) +
+                ((w / sum) * colors[2])
 
-    for y := y0; y <= y1; y += 1 {
-        downess_in_triangle := (y - y0) / total_height // % of progress of going down in triangle
-        downess_in_segment := (y - y0) / top_segment_height // % of progress of going down in segment ; be careful with divisions by zero
+            if x == 0 && y == 0 {
+                log(u, v, w)
+            }
 
-        pos_in_longest := top + vector_between_top_and_bottom * downess_in_triangle
-        pos_in_shortest := top + vector_between_top_and_middle * downess_in_segment
-        start, end := pos_in_longest, pos_in_shortest
-        if pos_in_longest.x > pos_in_shortest.x do start, end = pos_in_shortest, pos_in_longest
-
-        for x := start.x; x <= end.x; x += 1 {
-            dist_to_top := linalg.vector_length2([2]f32{x, y} - p0.xy)
-            dist_to_mid := linalg.vector_length2([2]f32{x, y} - p1.xy)
-            dist_to_bottom := linalg.vector_length2([2]f32{x, y} - p2.xy)
-            sum := dist_to_top + dist_to_mid + dist_to_bottom
-            color_h := ((dist_to_top / sum) * h0) + ((dist_to_mid / sum) * h1) + ((dist_to_bottom / sum) * h2)
-            log(color_h)
-
-            put_pixel(int(x), int(y), color * color_h) // attention, due to int casts y0+i != A.y
+            if u < 0 || v < 0 || w < 0 {
+                // put_pixel(int(x), int(y), {0, 0, 0})
+            } else {
+                put_pixel(int(x), int(y), color)
+            }
         }
     }
-    for y := y1; y <= y2; y += 1 {
-        downess_in_triangle := (y - y0) / total_height
-        downess_in_segment := (y - y1) / bottom_segment_height
-    start := top + vector_between_top_and_bottom * downess_in_triangle
 
-        end := mid + vector_between_mid_and_bottom * downess_in_segment
-        if (start.x > end.x) do start, end = end, start
+    //    Vec2i P;
+    //    for (P.x=bboxmin.x; P.x<=bboxmax.x; P.x++) {
+    //        for (P.y=bboxmin.y; P.y<=bboxmax.y; P.y++) {
+    //            Vec3f bc_screen  = barycentric(pts, P);
+    //            if (bc_screen.x<0 || bc_screen.y<0 || bc_screen.z<0) continue;
+    //            image.set(P.x, P.y, color);
+    //        }
+    // }
+}
 
-        for x := start.x; x <= end.x; x += 1 {
-            dist_to_top := linalg.vector_length2([2]f32{x, y} - p0.xy)
-            dist_to_mid := linalg.vector_length2([2]f32{x, y} - p1.xy)
-            dist_to_bottom := linalg.vector_length2([2]f32{x, y} - p2.xy)
-            sum := dist_to_top + dist_to_mid + dist_to_bottom
-            color_h := ((dist_to_top / sum) * h0) + ((dist_to_mid / sum) * h1) + ((dist_to_bottom / sum) * h2)
-
-            put_pixel(int(x), int(y), color * color_h) // attention, due to int casts y0+i != A.y
-        }
-    }
+barycentric :: proc(
+    a: [3]f32,
+    b: [3]f32,
+    c: [3]f32,
+    P: [3]f32,
+) -> (
+    u: f32,
+    v: f32,
+    w: f32,
+) {
+    v0 := b - a
+    v2 := P - a
+    v1 := c - a
+    d00 := linalg.dot(v0, v0)
+    d01 := linalg.dot(v0, v1)
+    d11 := linalg.dot(v1, v1)
+    d20 := linalg.dot(v2, v0)
+    d21 := linalg.dot(v2, v1)
+    invDenom := 1.0 / (d00 * d11 - d01 * d01)
+    v = (d11 * d20 - d01 * d21) * invDenom
+    w = (d00 * d21 - d01 * d20) * invDenom
+    u = 1.0 - v - w
+    return
 }
