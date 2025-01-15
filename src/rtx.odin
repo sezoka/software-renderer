@@ -1,4 +1,4 @@
-package raycaster
+package main
 
 // import "core:fmt"
 // import "core:math"
