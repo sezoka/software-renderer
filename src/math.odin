@@ -4,6 +4,9 @@ import "core:math/linalg"
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
+Vec4 :: [4]f32
+
+Mat4 :: matrix[4, 4]f32
 
 vec3_rotate_x :: proc(v: Vec3, angle: f32) -> Vec3 {
     return {
@@ -51,4 +54,63 @@ dot_vec3 :: proc(a, b: Vec3) -> f32 {
 
 dot_vec2 :: proc(a, b: Vec2) -> f32 {
     return (a.x * b.x) + (a.y * b.y)
+}
+
+make_scale_matrix :: proc(v: Vec3) -> Mat4 {
+    return matrix[4, 4]f32{
+        v.x, 0, 0, 0, 
+        0, v.y, 0, 0, 
+        0, 0, v.z, 0, 
+        0, 0, 0, 1, 
+    }
+}
+
+make_translation_matrix :: proc(v: Vec3) -> Mat4 {
+    return matrix[4, 4]f32{
+        1, 0, 0, v.x, 
+        0, 1, 0, v.y, 
+        0, 0, 1, v.z, 
+        0, 0, 0, 1, 
+    }
+}
+
+make_rotation_x_matrix :: proc(angle: f32) -> Mat4 {
+    c := math.cos(angle)
+    s := math.sin(angle)
+    return matrix[4, 4]f32{
+        1, 0, 0, 0, 
+        0, c, -s, 0, 
+        0, s, c, 0, 
+        0, 0, 0, 1, 
+    }
+}
+
+make_rotation_y_matrix :: proc(angle: f32) -> Mat4 {
+    c := math.cos(angle)
+    s := math.sin(angle)
+    return matrix[4, 4]f32{
+        c, 0, s, 0, 
+        0, 1, 0, 0, 
+        -s, 0, c, 0, 
+        0, 0, 0, 1, 
+    }
+}
+
+make_rotation_z_matrix :: proc(angle: f32) -> Mat4 {
+    c := math.cos(angle)
+    s := math.sin(angle)
+    return matrix[4, 4]f32{
+        c, -s, 0, 0, 
+        s, c, 0, 0, 
+        0, 0, 1, 0, 
+        0, 0, 0, 1, 
+    }
+}
+
+make_rotation_matrix :: proc(angle: Vec3) -> Mat4 {
+    return(
+        make_rotation_x_matrix(angle.x) *
+        make_rotation_y_matrix(angle.y) *
+        make_rotation_z_matrix(angle.z) \
+    )
 }

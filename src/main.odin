@@ -4,18 +4,25 @@ import "core:fmt"
 import tga "core:image/tga"
 import "core:math"
 import "core:math/linalg"
+import "core:math/rand"
 import "core:mem"
 import "core:slice"
-import rl "vendor:raylib"
+import sdl "vendor:sdl2"
+//import rl "vendor:raylib"
 
-PIXEL_SIZE :: 3
+PIXEL_SIZE :: 4
 screen_width: u32 = 800
 screen_height: u32 = 600
-color_buff: []u8
+//color_buff: []u8
 z_buff: []f32
 fov :: 640.0
 camera_pos: Vec3 = {0, 0, 0}
 delta_sum: f32
+window: ^sdl.Window
+window_surface: ^sdl.Surface
+prev_timestamp: u32
+delta: f32
+frame_counter: u64
 
 //mesh_vertices: [dynamic]Vec3
 //mesh_faces: [dynamic]Face
@@ -65,87 +72,168 @@ populate_points :: proc() {
         Face{6, 1, 4},
     )
 
-    append(&meshes, load_obj("./teapot.obj"))
+    append(&meshes, load_obj("./f22.obj"))
+    fmt.println("VERTS: ", len(meshes[0].vertices))
+    fmt.println("FACES: ", len(meshes[0].faces))
 
     //append(&meshes, Mesh{vertices = mesh_vertices[:], faces = mesh_faces[:]})
 }
 
-project_point :: proc(v: Vec3) -> Vec2 {
-    res: Vec2
+project_point :: proc(v: Vec3) -> Vec3 {
+    res: Vec3
     res.x = (fov * v.x) / v.z
     res.y = (fov * v.y) / v.z
+    res.z = v.z
     return res
 }
 
 main :: proc() {
-    rl.SetConfigFlags({.BORDERLESS_WINDOWED_MODE})
-    rl.InitWindow(800, 600, "Raycaster")
-    defer rl.CloseWindow()
-    screen_width = u32(rl.GetMonitorWidth(0))
-    screen_height = u32(rl.GetMonitorHeight(0))
-    rl.SetWindowSize(i32(screen_width), i32(screen_height))
-    rl.SetWindowPosition(0, 0)
-    rl.SetTargetFPS(0)
+    assert(0 <= sdl.Init({.VIDEO}))
+    defer sdl.Quit()
 
-    color_buff = make([]u8, screen_width * screen_height * 3)
+    window = sdl.CreateWindow(
+        "Rasterizer",
+        0,
+        0,
+        800,
+        600,
+        {.MAXIMIZED, .BORDERLESS},
+    )
+    assert(window != nil)
+
+    display_mode: sdl.DisplayMode
+    sdl.GetCurrentDisplayMode(0, &display_mode)
+    screen_width = u32(display_mode.w)
+    screen_height = u32(display_mode.h)
+
+    sdl.SetWindowSize(window, i32(screen_width), i32(screen_height))
+    sdl.SetWindowPosition(window, 0, 0)
+
+    window_surface = sdl.GetWindowSurface(window)
+    defer sdl.DestroyWindow(window)
+
+    //color_buff = make([]u8, screen_width * screen_height * 3)
     z_buff = make([]f32, screen_width * screen_height)
-    defer delete(color_buff)
+
+    //defer delete(color_buff)
     defer delete(z_buff)
 
-    img := rl.Image {
-        data    = raw_data(color_buff),
-        width   = i32(screen_width),
-        height  = i32(screen_height),
-        mipmaps = 1,
-        format  = .UNCOMPRESSED_R8G8B8,
-    }
 
-    front_buff := rl.LoadTextureFromImage(img)
-    defer rl.UnloadTexture(front_buff)
-    slice.fill(color_buff, 0)
+    //img := rl.Image {
+    //    data    = raw_data(color_buff),
+    //    width   = i32(screen_width),
+    //    height  = i32(screen_height),
+    //    mipmaps = 1,
+    //    format  = .UNCOMPRESSED_R8G8B8,
+    //}
 
-    rotation: f32 = 0
+    //front_buff := rl.LoadTextureFromImage(img)
+    //defer rl.UnloadTexture(front_buff)
+    //slice.fill(color_buff, 0)
+
 
     populate_points()
     defer clear_raster_data()
 
-    for !rl.WindowShouldClose() {
-        delta_sum += rl.GetFrameTime()
-        rl.BeginDrawing()
-        //rl.ClearBackground(rl.BLACK)
-        clear_color_buffer_black()
-        rotation += rl.GetFrameTime()
+    is_running := true
 
-        wireframe_rendering()
+    prev_timestamp = sdl.GetTicks()
 
-        rl.UpdateTexture(front_buff, raw_data(color_buff))
-        rl.DrawTexture(front_buff, 0, 0, rl.WHITE)
-        rl.DrawFPS(16, 16)
-        rl.EndDrawing()
+    for is_running {
+        timestamp := sdl.GetTicks()
+        delta = f32(timestamp - prev_timestamp) / 1000
+        prev_timestamp = timestamp
+
+        event: sdl.Event
+        // Poll for events
+        for sdl.PollEvent(&event) {
+            // Check for quit event
+            if event.type == .QUIT {
+                is_running = false // Set running to false to exit the loop
+            }
+        }
+
+        delta_sum += delta
+
+        frame_counter += 1
+        if 100 < frame_counter {
+            frame_counter = 0
+            fmt.println(1 / delta)
+        }
+
+
+        sdl.LockSurface(window_surface)
+        sdl.FillRect(window_surface, nil, 0)
+        slice.fill(z_buff, math.F32_MAX)
+
+        render_meshes()
+
+        //Uint32* pixels = (Uint32*)surface->pixels;
+        //for (int i = 0; i < WIDTH * HEIGHT; ++i) {
+        //    pixels[i] = 0xFF000000; // Black color (ARGB)
+        //}
+        //
+        //// Example: Draw a red rectangle
+        //for (int y = 100; y < 200; ++y) {
+        //    for (int x = 100; x < 300; ++x) {
+        //        pixels[y * surface->w + x] = 0xFFFF0000; // Red color (ARGB)
+        //    }
+        //}
+        sdl.UnlockSurface(window_surface)
+
+        sdl.UpdateWindowSurface(window)
+
+
+        //delta_sum += rl.GetFrameTime()
+        //rl.BeginDrawing()
+        ////rl.ClearBackground(rl.BLACK)
+        //clear_color_buffer_black()
+        //rotation += rl.GetFrameTime()
+        //
+        //wireframe_rendering()
+        //
+        //rl.UpdateTexture(front_buff, raw_data(color_buff))
+        //rl.DrawTexture(front_buff, 0, 0, rl.WHITE)
+        //rl.DrawFPS(16, 16)
+        //rl.EndDrawing()
     }
 }
 
-wireframe_rendering :: proc() {
+render_meshes :: proc() {
     for mesh in meshes {
+        world_matrix :=
+            make_translation_matrix(mesh.translation) *
+            make_rotation_matrix(mesh.rotation) *
+            make_scale_matrix(mesh.scale)
+
+
         for &face in mesh.faces {
             transformed_verts: [3]Vec3
 
             for vert_idx, i in face {
-                transformed_points := mesh.vertices[vert_idx - 1]
-                transformed_points = vec3_rotate_x(
-                    transformed_points,
-                    mesh.rotation.x + delta_sum,
-                )
-                transformed_points = vec3_rotate_y(
-                    transformed_points,
-                    mesh.rotation.y + delta_sum,
-                )
-                transformed_points = vec3_rotate_z(
-                    transformed_points,
-                    mesh.rotation.z + delta_sum,
-                )
+                vert_points := mesh.vertices[vert_idx - 1]
+                transformed_points: Vec4 = {
+                    vert_points.x,
+                    vert_points.y,
+                    vert_points.z,
+                    1,
+                }
+
+                transformed_points = world_matrix * transformed_points
+                //transformed_points = vec3_rotate_x(
+                //    transformed_points,
+                //    mesh.rotation.x + delta_sum,
+                //)
+                //transformed_points = vec3_rotate_y(
+                //    transformed_points,
+                //    mesh.rotation.y + delta_sum,
+                //)
+                //transformed_points = vec3_rotate_z(
+                //    transformed_points,
+                //    mesh.rotation.z + delta_sum,
+                //)
                 transformed_points.z += 5
-                transformed_verts[i] = transformed_points
+                transformed_verts[i] = transformed_points.xyz
             }
 
             // backface culling
@@ -156,55 +244,156 @@ wireframe_rendering :: proc() {
             vector_ac := vert_c - vert_a
             normal_vector := cross_vec3(vector_ab, vector_ac)
             camera_ray := camera_pos - vert_a
-            fmt.println(camera_ray)
-            dot_product := dot_vec3(camera_ray, normal_vector)
+            dot_product := dot_vec3(
+                linalg.normalize(camera_ray),
+                linalg.normalize(normal_vector),
+            )
             if dot_product < 0 do continue
 
-            projected_points: [3]Vec2
+            projected_points: [3]Vec3
             for &vert, i in transformed_verts {
                 projected_points[i] = project_point(vert)
                 projected_points[i].x += f32(screen_width / 2)
                 projected_points[i].y += f32(screen_height / 2)
             }
 
-            draw_triangle(projected_points, {255, 255, 255})
+            color := clamp_color(
+                {dot_product * 255, dot_product * 255, dot_product * 255},
+            )
+
+            //fmt.println(color, dot_product)
+
+            //draw_triangle_wireframe(projected_points, {255, 255, 0})
+            draw_triangle(projected_points, color)
         }
     }
 
+    //draw_triangle_wireframe(projected_points, {255, 255, 255})
+    draw_triangle(
+        {{200, 200, 0}, {300, 400, 0}, {100, 500, 1}},
+        {100, 100, 100},
+    )
+
+}
+
+clamp_color :: proc(clr: Vec3) -> Color {
+    return {
+        u8(math.clamp(clr.r, 0, 255)),
+        u8(math.clamp(clr.g, 0, 255)),
+        u8(math.clamp(clr.b, 0, 255)),
+    }
 }
 
 clear_raster_data :: proc() {
     delete(meshes)
 }
 
-draw_triangle :: proc(t: [3]Vec2, color: Color) {
+draw_triangle_wireframe :: proc(t: [3]Vec3, color: Color) {
+    t := t
+    //t[0].z = math.floor(t[0].z - 0.01)
+    //t[1].z = math.floor(t[1].z - 0.01)
+    //t[2].z = math.floor(t[2].z - 0.01)
     draw_line(t[0], t[1], color)
     draw_line(t[1], t[2], color)
     draw_line(t[2], t[0], color)
 }
 
-draw_line :: proc(a: Vec2, b: Vec2, color: Color) {
+draw_triangle :: proc(t: [3]Vec3, color: Color) {
+    p0: Vec3 = {math.round(t[0].x), math.round(t[0].y), t[0].z}
+    p1: Vec3 = {math.round(t[1].x), math.round(t[1].y), t[1].z}
+    p2: Vec3 = {math.round(t[2].x), math.round(t[2].y), t[2].z}
+
+    if p0.y > p1.y do p0, p1 = p1, p0
+    if p1.y > p2.y do p1, p2 = p2, p1
+    if p0.y > p1.y do p0, p1 = p1, p0
+    assert(p0.y <= p1.y && p1.y <= p2.y && p0.y <= p2.y)
+
+    x0, y0, z0 := p0.x, p0.y, p0.z
+    x1, y1, z1 := p1.x, p1.y, p1.z
+    x2, y2, z2 := p2.x, p2.y, p2.z
+
+    mX := math.round(((x2 - x0) * (y1 - y0)) / (y2 - y0)) + x0
+    mY := y1
+
+    if y0 != y1 {
+        triangle_slope_a := (x1 - x0) / (y1 - y0)
+        triangle_slope_b := (mX - x0) / (mY - y0)
+        z_slope_a := (z1 - z0) / (y1 - y0)
+        z_slope_b := (z2 - z0) / (mY - y0)
+        start_x := x0
+        end_x := x0
+        start_z := z0
+        end_z := z0
+        for y := y0; y <= y1; y += 1 {
+            draw_line({start_x, y, start_z}, {end_x, y, end_z}, color)
+            start_x += triangle_slope_a
+            end_x += triangle_slope_b
+            start_z += z_slope_a
+            end_z += z_slope_b
+        }
+    }
+
+    if y1 != y2 {
+        triangle_slope_a := (x2 - x1) / (y2 - y1)
+        triangle_slope_b := (x2 - mX) / (y2 - mY)
+        z_slope_a := (z2 - z1) / (y2 - y1)
+        z_slope_b := (z2 - z0) / (y2 - mY)
+        start_x := x2
+        end_x := x2
+        start_z := z0
+        end_z := z0
+        for y := y2; y >= y1; y -= 1 {
+            draw_line({start_x, y, start_z}, {end_x, y, end_z}, color)
+            start_x -= triangle_slope_a
+            end_x -= triangle_slope_b
+            //start_z = z_slope_a
+            //end_z = z_slope_b
+        }
+    }
+}
+
+draw_line :: proc(a: Vec3, b: Vec3, color: Color) {
+    a: Vec3 = {math.round(a.x), math.round(a.y), a.z}
+    b: Vec3 = {math.round(b.x), math.round(b.y), b.z}
     delta_x := b.x - a.x
     delta_y := b.y - a.y
     slide_length :=
         math.abs(delta_x) < math.abs(delta_y) ? math.abs(delta_y) : math.abs(delta_x)
     step_x := delta_x / slide_length
     step_y := delta_y / slide_length
+    step_z := (b.z - a.z) / slide_length
     x := a.x
     y := a.y
-    for i: u32 = 0; i < u32(slide_length); i += 1 {
-        draw_pixel(i32(math.round(x)), i32(math.round(y)), color)
+    z := a.z
+    for i: u32 = 0; i <= u32(slide_length); i += 1 {
+        if check_z_buff(i32(x), i32(y), z) {
+            draw_pixel(i32(math.round(x)), i32(math.round(y)), color)
+        }
         x += step_x
         y += step_y
+        z += step_z
     }
 }
 
-draw_pixel :: #force_inline proc(x, y: i32, color: Color) #no_bounds_check {
+check_z_buff :: #force_inline proc(x, y: i32, z: f32) -> bool {
+    if 0 <= x && x < i32(screen_width) && 0 <= y && y < i32(screen_height) {
+        ok := z < z_buff[u32(x) + u32(y) * screen_width]
+        if ok {
+            z_buff[u32(x) + u32(y) * screen_width] = z
+        }
+        return ok
+    }
+    return false
+}
+
+draw_pixel :: proc(x, y: i32, color: Color) #no_bounds_check {
+    color_buff := cast([^]u8)window_surface.pixels
     if 0 <= x && x < i32(screen_width) && 0 <= y && y < i32(screen_height) {
         offset := (x + y * i32(screen_width)) * PIXEL_SIZE
-        color_buff[offset] = color.r
+        color_buff[offset] = color.b
         color_buff[offset + 1] = color.g
-        color_buff[offset + 2] = color.b
+        color_buff[offset + 2] = color.r
+        color_buff[offset + 3] = 255
     }
 }
 
@@ -217,7 +406,11 @@ draw_rect :: proc(x, y, w, h: i32, color: Color) {
 }
 
 clear_color_buffer_black :: proc() {
-    slice.fill(color_buff, 0)
+    mem.set(
+        window_surface.pixels,
+        0,
+        int(window_surface.w * window_surface.h * PIXEL_SIZE),
+    )
 }
 
 clear_color_buffer :: proc(color: Color) #no_bounds_check {

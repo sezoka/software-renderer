@@ -59,8 +59,10 @@ load_obj :: proc(path: string) -> Mesh {
     }
 
     model: Mesh = {
-        vertices = vertices[:],
-        faces    = faces[:],
+        vertices    = vertices[:],
+        faces       = faces[:],
+        rotation    = {0, 0, 0},
+        scale       = {1, 1, 1},
     }
 
     return model
