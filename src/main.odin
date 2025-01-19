@@ -15,7 +15,7 @@ screen_width: u32 = 800
 screen_height: u32 = 600
 //color_buff: []u8
 z_buff: []f32
-fov :: 640.0
+fov :: math.PI
 camera_pos: Vec3 = {0, 0, 0}
 delta_sum: f32
 window: ^sdl.Window
@@ -77,14 +77,6 @@ populate_points :: proc() {
     fmt.println("FACES: ", len(meshes[0].faces))
 
     //append(&meshes, Mesh{vertices = mesh_vertices[:], faces = mesh_faces[:]})
-}
-
-project_point :: proc(v: Vec3) -> Vec3 {
-    res: Vec3
-    res.x = (fov * v.x) / v.z
-    res.y = (fov * v.y) / v.z
-    res.z = v.z
-    return res
 }
 
 main :: proc() {
@@ -200,6 +192,13 @@ main :: proc() {
 }
 
 render_meshes :: proc() {
+    projection_matrix := make_projection_matrix(
+        1,
+        f32(screen_height) / f32(screen_width),
+        0.1,
+        100,
+    )
+
     for mesh in meshes {
         world_matrix :=
             make_translation_matrix(mesh.translation) *
@@ -220,18 +219,18 @@ render_meshes :: proc() {
                 }
 
                 transformed_points = world_matrix * transformed_points
-                //transformed_points = vec3_rotate_x(
-                //    transformed_points,
-                //    mesh.rotation.x + delta_sum,
-                //)
-                //transformed_points = vec3_rotate_y(
-                //    transformed_points,
-                //    mesh.rotation.y + delta_sum,
-                //)
-                //transformed_points = vec3_rotate_z(
-                //    transformed_points,
-                //    mesh.rotation.z + delta_sum,
-                //)
+                transformed_points = vec3_rotate_x(
+                    transformed_points,
+                    mesh.rotation.x + delta_sum,
+                )
+                transformed_points = vec3_rotate_y(
+                    transformed_points,
+                    mesh.rotation.y + delta_sum,
+                )
+                transformed_points = vec3_rotate_z(
+                    transformed_points,
+                    mesh.rotation.z + delta_sum,
+                )
                 transformed_points.z += 5
                 transformed_verts[i] = transformed_points.xyz
             }
@@ -250,12 +249,17 @@ render_meshes :: proc() {
             )
             if dot_product < 0 do continue
 
-            projected_points: [3]Vec3
+            projected_points: [3]Vec4
             for &vert, i in transformed_verts {
-                projected_points[i] = project_point(vert)
+                projected_point :=
+                    (projection_matrix * Vec4{vert.x, vert.y, vert.z, 1})
+                projected_points[i] = do_perspective_divide(projected_point)
+                projected_points[i].x *= f32(screen_width / 2)
+                projected_points[i].y *= f32(screen_height / 2)
                 projected_points[i].x += f32(screen_width / 2)
                 projected_points[i].y += f32(screen_height / 2)
             }
+
 
             color := clamp_color(
                 {dot_product * 255, dot_product * 255, dot_product * 255},
@@ -270,7 +274,7 @@ render_meshes :: proc() {
 
     //draw_triangle_wireframe(projected_points, {255, 255, 255})
     draw_triangle(
-        {{200, 200, 0}, {300, 400, 0}, {100, 500, 1}},
+        {{200, 200, 0, 0}, {300, 400, 0, 0}, {100, 500, 1, 0}},
         {100, 100, 100},
     )
 
@@ -298,7 +302,7 @@ draw_triangle_wireframe :: proc(t: [3]Vec3, color: Color) {
     draw_line(t[2], t[0], color)
 }
 
-draw_triangle :: proc(t: [3]Vec3, color: Color) {
+draw_triangle :: proc(t: [3]Vec4, color: Color) {
     p0: Vec3 = {math.round(t[0].x), math.round(t[0].y), t[0].z}
     p1: Vec3 = {math.round(t[1].x), math.round(t[1].y), t[1].z}
     p2: Vec3 = {math.round(t[2].x), math.round(t[2].y), t[2].z}

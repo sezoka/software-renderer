@@ -8,27 +8,30 @@ Vec4 :: [4]f32
 
 Mat4 :: matrix[4, 4]f32
 
-vec3_rotate_x :: proc(v: Vec3, angle: f32) -> Vec3 {
+vec3_rotate_x :: proc(v: Vec4, angle: f32) -> Vec4 {
     return {
         v.x,
         v.y * math.cos(angle) - v.z * math.sin(angle),
         v.y * math.sin(angle) + v.z * math.cos(angle),
+        v.w,
     }
 }
 
-vec3_rotate_y :: proc(v: Vec3, angle: f32) -> Vec3 {
+vec3_rotate_y :: proc(v: Vec4, angle: f32) -> Vec4 {
     return {
         v.x * math.cos(angle) - v.z * math.sin(angle),
         v.y,
         v.x * math.sin(angle) + v.z * math.cos(angle),
+        v.w,
     }
 }
 
-vec3_rotate_z :: proc(v: Vec3, angle: f32) -> Vec3 {
+vec3_rotate_z :: proc(v: Vec4, angle: f32) -> Vec4 {
     return {
         v.x * math.cos(angle) - v.y * math.sin(angle),
         v.x * math.sin(angle) + v.y * math.cos(angle),
         v.z,
+        v.w,
     }
 }
 
@@ -113,4 +116,22 @@ make_rotation_matrix :: proc(angle: Vec3) -> Mat4 {
         make_rotation_y_matrix(angle.y) *
         make_rotation_z_matrix(angle.z) \
     )
+}
+
+make_projection_matrix :: proc(fov, aspect_ratio, z_near, z_far: f32) -> Mat4 {
+    perspective_scale_factor := 1 / math.tan(fov / 2)
+    z_clipping_stuff := z_far / (z_far - z_near)
+    return matrix[4, 4]f32{
+        aspect_ratio * perspective_scale_factor, 0, 0, 0, 
+        0, perspective_scale_factor, 0, 0, 
+        0, 0, z_clipping_stuff, (-z_far * z_near) / (z_far - z_near), 
+        0, 0, 1, 0, 
+    }
+}
+
+do_perspective_divide :: proc(vec: Vec4) -> Vec4 {
+    if vec.w != 0 {
+        return {vec.x / vec.w, vec.y / vec.w, vec.z / vec.w, vec.w}
+    }
+    return vec
 }
