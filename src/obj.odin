@@ -14,6 +14,7 @@ load_obj :: proc(path: string) -> Mesh {
     lines_iter := file
     faces: [dynamic]Face
     vertices: [dynamic]Vec3
+    uvs: [dynamic]Vec2
     for line in strings.split_lines_iterator(&lines_iter) {
         if len(strings.trim_space(line)) < 2 do continue
         if line[0:2] == "v " {
@@ -49,20 +50,33 @@ load_obj :: proc(path: string) -> Mesh {
                     j += 1
                 }
 
-                face[i] = indices[0]
+                face.vert_ids[i] = indices[0]
+                face.uv_ids[i] = indices[1]
 
                 i += 1
             }
 
             append(&faces, face)
+        } else if line[0:2] == "vt" {
+            uv: Vec2
+            nums_iter := line[3:]
+            i := 0
+            for num_str in strings.split_iterator(&nums_iter, " ") {
+                coord, ok := strconv.parse_f32(num_str)
+                assert(ok)
+                uv[i] = coord
+                i += 1
+            }
+            append(&uvs, uv)
         }
     }
 
     model: Mesh = {
-        vertices    = vertices[:],
-        faces       = faces[:],
-        rotation    = {0, 0, 0},
-        scale       = {1, 1, 1},
+        vertices = vertices[:],
+        faces    = faces[:],
+        uvs      = uvs[:],
+        rotation = {0, 0, 0},
+        scale    = {1, 1, 1},
     }
 
     return model

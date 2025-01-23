@@ -1,5 +1,6 @@
 package main
 
+import "../../sz/sc"
 import "core:fmt"
 import tga "core:image/tga"
 import "core:math"
@@ -23,56 +24,29 @@ window_surface: ^sdl.Surface
 prev_timestamp: u32
 delta: f32
 frame_counter: u64
+light: Light = {
+    direction = {0, 0, 1},
+}
+model_texture: sc.Image
 
 //mesh_vertices: [dynamic]Vec3
 //mesh_faces: [dynamic]Face
 
 meshes: [dynamic]Mesh
 
-Color :: struct {
-    r, g, b: u8,
+Light :: struct {
+    direction: Vec3,
+    color:     Color,
 }
+
+Color :: [3]u8
 
 Triangle :: [3]Vec3
 
 populate_points :: proc() {
-    mesh_vertices: [dynamic]Vec3
-    mesh_faces: [dynamic]Face
-
-    append(
-        &mesh_vertices,
-        Vec3{-1, -1, -1},
-        Vec3{-1, 1, -1},
-        Vec3{1, 1, -1},
-        Vec3{1, -1, -1},
-        Vec3{1, 1, 1},
-        Vec3{1, -1, 1},
-        Vec3{-1, 1, 1},
-        Vec3{-1, -1, 1},
-    )
-    append(
-        &mesh_faces,
-        // front
-        Face{1, 2, 3},
-        Face{1, 2, 4},
-        // right
-        Face{4, 3, 5},
-        Face{4, 5, 6},
-        // back
-        Face{6, 5, 7},
-        Face{6, 7, 8},
-        // left
-        Face{8, 7, 2},
-        Face{8, 2, 1},
-        // top
-        Face{2, 7, 5},
-        Face{2, 5, 3},
-        // bottom
-        Face{6, 8, 1},
-        Face{6, 1, 4},
-    )
-
-    append(&meshes, load_obj("./f22.obj"))
+    append(&meshes, load_obj("./cube.obj"))
+    cube_texture := sc.load_image("./cube.png", flip = true)
+    model_texture = cube_texture
     fmt.println("VERTS: ", len(meshes[0].vertices))
     fmt.println("FACES: ", len(meshes[0].faces))
 
@@ -151,6 +125,7 @@ main :: proc() {
         if 100 < frame_counter {
             frame_counter = 0
             fmt.println(1 / delta)
+            fmt.println(delta / 1000)
         }
 
 
@@ -191,6 +166,19 @@ main :: proc() {
     }
 }
 
+find_barycentric_coords :: proc(a, b, c: Vec2, p: Vec2) -> Vec3 {
+    ac := c - a
+    ab := b - a
+    pc := c - p
+    pb := b - p
+    ap := p - a
+    area_parallelogram_abs := (ac.x * ab.y - ac.y * ab.x) // || AC X AB ||
+    alpha := (pc.x * pb.y - pc.y * pb.x) / area_parallelogram_abs
+    beta := (ac.x * ap.y - ac.y * ap.x) / area_parallelogram_abs
+    gama := 1 - alpha - beta
+    return {alpha, beta, gama}
+}
+
 render_meshes :: proc() {
     projection_matrix := make_projection_matrix(
         1,
@@ -199,7 +187,9 @@ render_meshes :: proc() {
         100,
     )
 
-    for mesh in meshes {
+    for &mesh in meshes {
+        mesh.rotation.x += delta
+
         world_matrix :=
             make_translation_matrix(mesh.translation) *
             make_rotation_matrix(mesh.rotation) *
@@ -208,9 +198,14 @@ render_meshes :: proc() {
 
         for &face in mesh.faces {
             transformed_verts: [3]Vec3
+            uvs: [3]Vec2
 
-            for vert_idx, i in face {
-                vert_points := mesh.vertices[vert_idx - 1]
+            for i in 0 ..< 3 {
+                vert_idx := face.vert_ids[i] - 1
+                uv_idx := face.uv_ids[i] - 1
+
+                uvs[i] = mesh.uvs[uv_idx]
+                vert_points := mesh.vertices[vert_idx]
                 transformed_points: Vec4 = {
                     vert_points.x,
                     vert_points.y,
@@ -219,18 +214,18 @@ render_meshes :: proc() {
                 }
 
                 transformed_points = world_matrix * transformed_points
-                transformed_points = vec3_rotate_x(
-                    transformed_points,
-                    mesh.rotation.x + delta_sum,
-                )
-                transformed_points = vec3_rotate_y(
-                    transformed_points,
-                    mesh.rotation.y + delta_sum,
-                )
-                transformed_points = vec3_rotate_z(
-                    transformed_points,
-                    mesh.rotation.z + delta_sum,
-                )
+                //transformed_points = vec3_rotate_x(
+                //    transformed_points,
+                //    mesh.rotation.x + delta_sum,
+                //)
+                //transformed_points = vec3_rotate_y(
+                //    transformed_points,
+                //    mesh.rotation.y + delta_sum,
+                //)
+                //transformed_points = vec3_rotate_z(
+                //    transformed_points,
+                //    mesh.rotation.z + delta_sum,
+                //)
                 transformed_points.z += 5
                 transformed_verts[i] = transformed_points.xyz
             }
@@ -241,12 +236,9 @@ render_meshes :: proc() {
             vert_c := transformed_verts[2]
             vector_ab := vert_b - vert_a
             vector_ac := vert_c - vert_a
-            normal_vector := cross_vec3(vector_ab, vector_ac)
+            normal_vector := linalg.normalize(cross_vec3(vector_ab, vector_ac))
             camera_ray := camera_pos - vert_a
-            dot_product := dot_vec3(
-                linalg.normalize(camera_ray),
-                linalg.normalize(normal_vector),
-            )
+            dot_product := dot_vec3(camera_ray, normal_vector)
             if dot_product < 0 do continue
 
             projected_points: [3]Vec4
@@ -254,29 +246,43 @@ render_meshes :: proc() {
                 projected_point :=
                     (projection_matrix * Vec4{vert.x, vert.y, vert.z, 1})
                 projected_points[i] = do_perspective_divide(projected_point)
+                projected_points[i].y *= -1
                 projected_points[i].x *= f32(screen_width / 2)
                 projected_points[i].y *= f32(screen_height / 2)
                 projected_points[i].x += f32(screen_width / 2)
                 projected_points[i].y += f32(screen_height / 2)
             }
 
+            light_intensity := -linalg.dot(normal_vector, light.direction)
 
             color := clamp_color(
-                {dot_product * 255, dot_product * 255, dot_product * 255},
+                {
+                    light_intensity * 255,
+                    light_intensity * 255,
+                    light_intensity * 255,
+                },
             )
 
             //fmt.println(color, dot_product)
 
             //draw_triangle_wireframe(projected_points, {255, 255, 0})
-            draw_triangle(projected_points, color)
+            //draw_triangle(projected_points, color)
+            draw_textured_triangle(
+                {
+                    {pos = projected_points[0], uv = uvs[0]},
+                    {pos = projected_points[1], uv = uvs[1]},
+                    {pos = projected_points[2], uv = uvs[2]},
+                },
+                model_texture,
+            )
         }
     }
 
     //draw_triangle_wireframe(projected_points, {255, 255, 255})
-    draw_triangle(
-        {{200, 200, 0, 0}, {300, 400, 0, 0}, {100, 500, 1, 0}},
-        {100, 100, 100},
-    )
+    //draw_triangle(
+    //    {{200, 200, 0, 0}, {300, 400, 0, 0}, {100, 500, 1, 0}},
+    //    {100, 100, 100},
+    //)
 
 }
 
@@ -354,6 +360,102 @@ draw_triangle :: proc(t: [3]Vec4, color: Color) {
             //end_z = z_slope_b
         }
     }
+}
+
+Vertex :: struct {
+    pos: Vec4,
+    uv:  Vec2,
+}
+
+round_vec4 :: #force_inline proc(v: Vec4) -> Vec4 {
+    return {math.round(v.x), math.round(v.y), v.z, v.w}
+}
+
+draw_texel :: #force_inline proc(
+    x: f32,
+    y: f32,
+    p0: Vec2,
+    p1: Vec2,
+    p2: Vec2,
+    uv0: Vec2,
+    uv1: Vec2,
+    uv2: Vec2,
+    texture: sc.Image,
+) {
+    baryc := find_barycentric_coords(p0, p1, p2, {x, y})
+    tex_coord :=
+        (uv0 * baryc[0] + uv1 * baryc[1] + uv2 * baryc[2]) *
+        {f32(texture.w), f32(texture.h)}
+    tex_coord = {math.abs(tex_coord.x), math.abs(tex_coord.y)}
+    //fmt.println(tex_coord)
+    pixel_color_offset := (i32(tex_coord.x) + i32(tex_coord.y) * texture.w) * 4
+    if uint(pixel_color_offset) < len(texture.data) {
+        pixel_color: Color
+        pixel_color[0] = texture.data[pixel_color_offset]
+        pixel_color[1] = texture.data[pixel_color_offset + 1]
+        pixel_color[2] = texture.data[pixel_color_offset + 2]
+
+        draw_pixel(i32(x), i32(y), pixel_color)
+    }
+}
+
+draw_textured_triangle :: proc(t: [3]Vertex, texture: sc.Image) {
+    t := t
+
+    if t[0].pos.y > t[1].pos.y do t[0], t[1] = t[1], t[0]
+    if t[1].pos.y > t[2].pos.y do t[1], t[2] = t[2], t[1]
+    if t[0].pos.y > t[1].pos.y do t[0], t[1] = t[1], t[0]
+    assert(
+        t[0].pos.y <= t[1].pos.y &&
+        t[1].pos.y <= t[2].pos.y &&
+        t[0].pos.y <= t[2].pos.y,
+    )
+
+    p0 := round_vec4(t[0].pos)
+    p1 := round_vec4(t[1].pos)
+    p2 := round_vec4(t[2].pos)
+    x0, y0, z0 := p0.x, p0.y, p0.z
+    x1, y1, z1 := p1.x, p1.y, p1.z
+    x2, y2, z2 := p2.x, p2.y, p2.z
+    uv0 := t[0].uv
+    uv1 := t[1].uv
+    uv2 := t[2].uv
+
+    if y1 - y0 != 0 {
+        inv_slope_1: f32
+        inv_slope_2: f32
+        if y1 - y0 != 0 do inv_slope_1 = (x1 - x0) / math.abs(y1 - y0)
+        if y2 - y0 != 0 do inv_slope_2 = (x2 - x0) / math.abs(y2 - y0)
+        for y := y0; y < y1; y += 1 {
+            x_start := x1 + (y - y1) * inv_slope_1
+            x_end := x0 + (y - y0) * inv_slope_2
+            if x_end < x_start {
+                x_start, x_end = x_end, x_start
+            }
+            for x := x_start; x < x_end; x += 1 {
+                draw_texel(x, y, p0.xy, p1.xy, p2.xy, uv0, uv1, uv2, texture)
+            }
+        }
+    }
+
+    if y2 - y1 != 0 {
+        inv_slope_1: f32
+        inv_slope_2: f32
+        if y2 - y1 != 0 do inv_slope_1 = (x2 - x1) / math.abs(y2 - y1)
+        if y2 - y0 != 0 do inv_slope_2 = (x2 - x0) / math.abs(y2 - y0)
+
+        for y := y1; y < y2; y += 1 {
+            x_start := x1 + (y - y1) * inv_slope_1
+            x_end := x0 + (y - y0) * inv_slope_2
+            if x_end < x_start {
+                x_start, x_end = x_end, x_start
+            }
+            for x := x_start; x < x_end; x += 1 {
+                draw_texel(x, y, p0.xy, p1.xy, p2.xy, uv0, uv1, uv2, texture)
+            }
+        }
+    }
+
 }
 
 draw_line :: proc(a: Vec3, b: Vec3, color: Color) {
