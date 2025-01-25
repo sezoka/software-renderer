@@ -113,10 +113,13 @@ make_rotation_z_matrix :: proc(angle: f32) -> Mat4 {
 
 make_rotation_matrix :: proc(angle: Vec3) -> Mat4 {
     return(
-        make_rotation_x_matrix(angle.x) *
-        make_rotation_y_matrix(angle.y) *
-        make_rotation_z_matrix(angle.z) \
+        linalg.matrix4_rotate_f32(angle.x, {1, 0, 0}) *
+        linalg.matrix4_rotate_f32(angle.y, {0, 1, 0}) *
+        linalg.matrix4_rotate_f32(angle.z, {0, 0, 1}) \
     )
+    //make_rotation_x_matrix(angle.x) *
+    //make_rotation_y_matrix(angle.y) *
+    //make_rotation_z_matrix(angle.z) \
 }
 
 make_projection_matrix :: proc(fov, aspect_ratio, z_near, z_far: f32) -> Mat4 {

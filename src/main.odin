@@ -8,16 +8,18 @@ import "core:math/linalg"
 import "core:math/rand"
 import "core:mem"
 import "core:slice"
+import "core:sys/linux"
 import sdl "vendor:sdl2"
 //import rl "vendor:raylib"
 
 PIXEL_SIZE :: 4
-screen_width: u32 = 800
-screen_height: u32 = 600
+
+screen_width: u32 = 1024
+screen_height: u32 = 720
 //color_buff: []u8
 z_buff: []f32
 fov :: math.PI
-camera_pos: Vec3 = {0, 0, 0}
+camera: Fps_Camera
 delta_sum: f32
 window: ^sdl.Window
 window_surface: ^sdl.Surface
@@ -28,9 +30,6 @@ light: Light = {
     direction = {0, 0, 1},
 }
 model_texture: sc.Image
-
-//mesh_vertices: [dynamic]Vec3
-//mesh_faces: [dynamic]Face
 
 meshes: [dynamic]Mesh
 
@@ -44,17 +43,19 @@ Color :: [3]u8
 Triangle :: [3]Vec3
 
 populate_points :: proc() {
-    append(&meshes, load_obj("./cube.obj"))
-    cube_texture := sc.load_image("./cube.png", flip = true)
+    append(&meshes, load_obj("./assets/player.obj"))
+    cube_texture := sc.load_image("./assets/player.png", flip = true)
     model_texture = cube_texture
     fmt.println("VERTS: ", len(meshes[0].vertices))
     fmt.println("FACES: ", len(meshes[0].faces))
-
-    //append(&meshes, Mesh{vertices = mesh_vertices[:], faces = mesh_faces[:]})
+    fmt.println(">>", meshes[0].vertices)
+    fmt.println(">>", meshes[0].faces)
 }
 
+is_running := true
+
 main :: proc() {
-    assert(0 <= sdl.Init({.VIDEO}))
+    assert(0 <= sdl.Init({}))
     defer sdl.Quit()
 
     window = sdl.CreateWindow(
@@ -67,8 +68,11 @@ main :: proc() {
     )
     assert(window != nil)
 
+    sdl.SetRelativeMouseMode(true)
+
     display_mode: sdl.DisplayMode
     sdl.GetCurrentDisplayMode(0, &display_mode)
+    // HER
     screen_width = u32(display_mode.w)
     screen_height = u32(display_mode.h)
 
@@ -78,32 +82,16 @@ main :: proc() {
     window_surface = sdl.GetWindowSurface(window)
     defer sdl.DestroyWindow(window)
 
-    //color_buff = make([]u8, screen_width * screen_height * 3)
     z_buff = make([]f32, screen_width * screen_height)
 
-    //defer delete(color_buff)
     defer delete(z_buff)
-
-
-    //img := rl.Image {
-    //    data    = raw_data(color_buff),
-    //    width   = i32(screen_width),
-    //    height  = i32(screen_height),
-    //    mipmaps = 1,
-    //    format  = .UNCOMPRESSED_R8G8B8,
-    //}
-
-    //front_buff := rl.LoadTextureFromImage(img)
-    //defer rl.UnloadTexture(front_buff)
-    //slice.fill(color_buff, 0)
-
 
     populate_points()
     defer clear_raster_data()
 
-    is_running := true
-
     prev_timestamp = sdl.GetTicks()
+
+    camera = make_fps_camera(screen_width, screen_height)
 
     for is_running {
         timestamp := sdl.GetTicks()
@@ -122,16 +110,32 @@ main :: proc() {
         delta_sum += delta
 
         frame_counter += 1
-        if 100 < frame_counter {
+        if 50 < frame_counter {
             frame_counter = 0
-            fmt.println(1 / delta)
-            fmt.println(delta / 1000)
+            fmt.println("FPS:", 1 / delta, "MS:", math.trunc(delta * 1000))
+            fmt.println("POS: ", camera.pos.x, camera.pos.y, camera.pos.z)
         }
 
 
         sdl.LockSurface(window_surface)
         sdl.FillRect(window_surface, nil, 0)
         slice.fill(z_buff, math.F32_MAX)
+
+        mouse_x, mouse_y: i32
+        sdl.GetRelativeMouseState(&mouse_x, &mouse_y)
+
+        state := sdl.GetKeyboardState(nil)
+        process_mouse_fps_camera(&camera, f32(mouse_x), f32(mouse_y))
+        camera_dir: Direction_Set
+        if (state[sdl.SCANCODE_W] != 0) do camera_dir += {.Forward}
+        if (state[sdl.SCANCODE_S] != 0) do camera_dir += {.Backward}
+        if (state[sdl.SCANCODE_A] != 0) do camera_dir += {.Left}
+        if (state[sdl.SCANCODE_D] != 0) do camera_dir += {.Right}
+        if (state[sdl.SCANCODE_SPACE] != 0) do camera_dir += {.Up}
+        if (state[sdl.SCANCODE_LSHIFT] != 0) do camera_dir += {.Down}
+        process_keyboard_fps_camera(&camera, delta, camera_dir)
+
+        update_fps_camera(&camera)
 
         render_meshes()
 
@@ -166,18 +170,36 @@ main :: proc() {
     }
 }
 
-find_barycentric_coords :: proc(a, b, c: Vec2, p: Vec2) -> Vec3 {
-    ac := c - a
-    ab := b - a
-    pc := c - p
-    pb := b - p
-    ap := p - a
-    area_parallelogram_abs := (ac.x * ab.y - ac.y * ab.x) // || AC X AB ||
-    alpha := (pc.x * pb.y - pc.y * pb.x) / area_parallelogram_abs
-    beta := (ac.x * ap.y - ac.y * ap.x) / area_parallelogram_abs
-    gama := 1 - alpha - beta
-    return {alpha, beta, gama}
+look_at :: proc(eye: Vec3, target: Vec3, up: Vec3) -> Mat4 {
+    z := linalg.normalize(target - eye)
+    x := linalg.normalize(linalg.cross(up, z))
+    y := linalg.cross(z, x)
+
+    return matrix[4, 4]f32{
+        x.x, x.y, x.z, -dot_vec3(x, eye), 
+        y.x, y.y, y.z, -dot_vec3(y, eye), 
+        z.x, z.y, z.z, -dot_vec3(z, eye), 
+        0, 0, 0, 1, 
+    }
 }
+
+find_barycentric_coords :: #force_inline proc(
+    a: [2]f32,
+    b: [2]f32,
+    c: [2]f32,
+    p: [2]f32,
+) -> (
+    u: f32,
+    v: f32,
+    w: f32,
+) {
+    tmp := #force_inline linalg.cross(
+        [3]f32{c.x - a.x, b.x - a.x, a.x - p.x},
+        [3]f32{c.y - a.y, b.y - a.y, a.y - p.y},
+    )
+    return 1 - (tmp.x + tmp.y) / tmp.z, tmp.y / tmp.z, tmp.x / tmp.z
+}
+
 
 render_meshes :: proc() {
     projection_matrix := make_projection_matrix(
@@ -188,13 +210,27 @@ render_meshes :: proc() {
     )
 
     for &mesh in meshes {
-        mesh.rotation.x += delta
+        //mesh.rotation.y += delta
+        //mesh.translation.y = 5
+        mesh.translation.z = 100
+
+        view_matrix := look_at(
+            camera.pos,
+            camera.pos + camera.front,
+            {0, 1, 0},
+        )
+
 
         world_matrix :=
-            make_translation_matrix(mesh.translation) *
+            linalg.matrix4_translate_f32(mesh.translation) *
             make_rotation_matrix(mesh.rotation) *
-            make_scale_matrix(mesh.scale)
+            linalg.matrix4_scale_f32(mesh.scale)
 
+        //if true {
+        //    fmt.println(">>>", make_scale_matrix(mesh.scale))
+        //    is_running = false
+        //    return
+        //}
 
         for &face in mesh.faces {
             transformed_verts: [3]Vec3
@@ -206,14 +242,15 @@ render_meshes :: proc() {
 
                 uvs[i] = mesh.uvs[uv_idx]
                 vert_points := mesh.vertices[vert_idx]
-                transformed_points: Vec4 = {
+                transformed_vert: Vec4 = {
                     vert_points.x,
                     vert_points.y,
                     vert_points.z,
                     1,
                 }
 
-                transformed_points = world_matrix * transformed_points
+                transformed_vert =
+                    view_matrix * world_matrix * transformed_vert
                 //transformed_points = vec3_rotate_x(
                 //    transformed_points,
                 //    mesh.rotation.x + delta_sum,
@@ -226,8 +263,7 @@ render_meshes :: proc() {
                 //    transformed_points,
                 //    mesh.rotation.z + delta_sum,
                 //)
-                transformed_points.z += 5
-                transformed_verts[i] = transformed_points.xyz
+                transformed_verts[i] = transformed_vert.xyz
             }
 
             // backface culling
@@ -237,8 +273,8 @@ render_meshes :: proc() {
             vector_ab := vert_b - vert_a
             vector_ac := vert_c - vert_a
             normal_vector := linalg.normalize(cross_vec3(vector_ab, vector_ac))
-            camera_ray := camera_pos - vert_a
-            dot_product := dot_vec3(camera_ray, normal_vector)
+            vert_to_camera_ray := Vec3{0, 0, 0} - vert_a
+            dot_product := dot_vec3(vert_to_camera_ray, normal_vector)
             if dot_product < 0 do continue
 
             projected_points: [3]Vec4
@@ -298,14 +334,14 @@ clear_raster_data :: proc() {
     delete(meshes)
 }
 
-draw_triangle_wireframe :: proc(t: [3]Vec3, color: Color) {
+draw_triangle_wireframe :: proc(t: [3]Vec4, color: Color) {
     t := t
     //t[0].z = math.floor(t[0].z - 0.01)
     //t[1].z = math.floor(t[1].z - 0.01)
     //t[2].z = math.floor(t[2].z - 0.01)
-    draw_line(t[0], t[1], color)
-    draw_line(t[1], t[2], color)
-    draw_line(t[2], t[0], color)
+    draw_line(t[0].xyz, t[1].xyz, color)
+    draw_line(t[1].xyz, t[2].xyz, color)
+    draw_line(t[2].xyz, t[0].xyz, color)
 }
 
 draw_triangle :: proc(t: [3]Vec4, color: Color) {
@@ -374,28 +410,40 @@ round_vec4 :: #force_inline proc(v: Vec4) -> Vec4 {
 draw_texel :: #force_inline proc(
     x: f32,
     y: f32,
-    p0: Vec2,
-    p1: Vec2,
-    p2: Vec2,
+    p0: Vec4,
+    p1: Vec4,
+    p2: Vec4,
     uv0: Vec2,
     uv1: Vec2,
     uv2: Vec2,
     texture: sc.Image,
 ) {
-    baryc := find_barycentric_coords(p0, p1, p2, {x, y})
-    tex_coord :=
-        (uv0 * baryc[0] + uv1 * baryc[1] + uv2 * baryc[2]) *
+    alpha, beta, gama := find_barycentric_coords(p0.xy, p1.xy, p2.xy, {x, y})
+
+    interpolated_uv :=
+        ((uv0 / p0.w) * alpha + (uv1 / p1.w) * beta + (uv2 / p2.w) * gama) *
         {f32(texture.w), f32(texture.h)}
-    tex_coord = {math.abs(tex_coord.x), math.abs(tex_coord.y)}
+    interpolated_recipocal_w :=
+        (1 / p0.w) * alpha + (1 / p1.w) * beta + (1 / p2.w) * gama
+
+    pixel_position_x := math.abs(interpolated_uv[0] / interpolated_recipocal_w)
+    pixel_position_y := math.abs(interpolated_uv[1] / interpolated_recipocal_w)
     //fmt.println(tex_coord)
-    pixel_color_offset := (i32(tex_coord.x) + i32(tex_coord.y) * texture.w) * 4
+    pixel_color_offset :=
+        (i32(pixel_position_x) + i32(pixel_position_y) * texture.w) * 4
     if uint(pixel_color_offset) < len(texture.data) {
         pixel_color: Color
         pixel_color[0] = texture.data[pixel_color_offset]
         pixel_color[1] = texture.data[pixel_color_offset + 1]
         pixel_color[2] = texture.data[pixel_color_offset + 2]
 
-        draw_pixel(i32(x), i32(y), pixel_color)
+
+        x := i32(math.round(x))
+        y := i32(math.round(y))
+        //fmt.println(interpolated_recipocal_w)
+        if check_z_buff(x, y, 1 - interpolated_recipocal_w) {
+            draw_pixel(x, y, pixel_color)
+        }
     }
 }
 
@@ -433,7 +481,7 @@ draw_textured_triangle :: proc(t: [3]Vertex, texture: sc.Image) {
                 x_start, x_end = x_end, x_start
             }
             for x := x_start; x < x_end; x += 1 {
-                draw_texel(x, y, p0.xy, p1.xy, p2.xy, uv0, uv1, uv2, texture)
+                draw_texel(x, y, p0, p1, p2, uv0, uv1, uv2, texture)
             }
         }
     }
@@ -451,7 +499,7 @@ draw_textured_triangle :: proc(t: [3]Vertex, texture: sc.Image) {
                 x_start, x_end = x_end, x_start
             }
             for x := x_start; x < x_end; x += 1 {
-                draw_texel(x, y, p0.xy, p1.xy, p2.xy, uv0, uv1, uv2, texture)
+                draw_texel(x, y, p0, p1, p2, uv0, uv1, uv2, texture)
             }
         }
     }
